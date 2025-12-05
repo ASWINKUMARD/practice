@@ -1,4 +1,4 @@
-# app.py - Flask Chatbot with Stunning UI
+# app.py - Flask Chatbot with Widget Support
 from flask import Flask, render_template, request, jsonify, session
 import requests
 from bs4 import BeautifulSoup
@@ -12,12 +12,15 @@ from typing import Optional, Dict, List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__)
-app.secret_key = secrets.token_hex(32)
+app.secret_key = os.getenv("SECRET_KEY", secrets.token_hex(32))
 
 # Configuration
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_API_BASE = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "kwaipilot/kat-coder-pro:free"
+
+# Store chatbots in memory (in production, use database)
+CHATBOTS_DB = {}
 
 class FastScraper:
     def __init__(self):
@@ -335,10 +338,8 @@ def create_chatbot():
             session['current_company'] = slug
             session.modified = True
             
-            # Store in app context for runtime
-            if not hasattr(app, 'chatbots'):
-                app.chatbots = {}
-            app.chatbots[slug] = chatbot
+            # Store in global DB for widget access
+            CHATBOTS_DB[slug] = chatbot
             
             return jsonify({
                 'success': True,
@@ -375,8 +376,8 @@ def delete_chatbot():
     if 'chatbots' in session and slug in session['chatbots']:
         del session['chatbots'][slug]
         
-        if hasattr(app, 'chatbots') and slug in app.chatbots:
-            del app.chatbots[slug]
+        if slug in CHATBOTS_DB:
+            del CHATBOTS_DB[slug]
         
         if session.get('current_company') == slug:
             session['current_company'] = None
@@ -391,13 +392,39 @@ def chat():
     message = data.get('message')
     slug = session.get('current_company')
     
-    if not slug or not hasattr(app, 'chatbots') or slug not in app.chatbots:
+    if not slug or slug not in CHATBOTS_DB:
         return jsonify({'success': False, 'error': 'No chatbot selected'})
     
-    chatbot = app.chatbots[slug]
+    chatbot = CHATBOTS_DB[slug]
     response = chatbot.ask(message)
     
     return jsonify({'success': True, 'response': response})
+
+# Widget API - Public endpoint for embedded chatbots
+@app.route('/api/widget/chat/<slug>', methods=['POST'])
+def widget_chat(slug):
+    data = request.json
+    message = data.get('message')
+    
+    if not slug or slug not in CHATBOTS_DB:
+        return jsonify({'success': False, 'error': 'Chatbot not found'})
+    
+    chatbot = CHATBOTS_DB[slug]
+    response = chatbot.ask(message)
+    
+    return jsonify({'success': True, 'response': response, 'company': chatbot.company_name})
+
+@app.route('/api/widget/info/<slug>', methods=['GET'])
+def widget_info(slug):
+    if slug not in CHATBOTS_DB:
+        return jsonify({'success': False, 'error': 'Chatbot not found'})
+    
+    chatbot = CHATBOTS_DB[slug]
+    return jsonify({
+        'success': True,
+        'company_name': chatbot.company_name,
+        'website_url': chatbot.website_url
+    })
 
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
