@@ -9,3 +9,7 @@ langchain-text-splitters
 langchain-community
 sentence-transformers
 chromadb
+Flask
+requests
+beautifulsoup4
+lxml
